@@ -26,3 +26,15 @@
 Manifest.toml  
 docs/build/
 
+# Excluded directories
+/extension/
+/fb_code/
+
+# macOS files
+.DS_Store
+._.DS_Store
+._*
+.smbdelete*
+
+# Conversation export files
+*-this-is-a-repo-*.txt
