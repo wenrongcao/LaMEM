@@ -321,6 +321,8 @@ PetscErrorCode SNESLineSearchPreCheck(SNESLineSearch linesearch, Vec x, Vec d, P
 
 	NLSol       *nl;
 	JacRes      *jr;
+	PetscInt    it, maxit, ls;
+	PetscScalar rnorm, rnorm0, rnew, lambda, dTmax, Tmax;
 
 	PetscFunctionBeginUser;
 
@@ -342,15 +344,78 @@ PetscErrorCode SNESLineSearchPreCheck(SNESLineSearch linesearch, Vec x, Vec d, P
 
 	if(jr->ctrl.actTemp)
 	{
-		// get residual and tangent matrix
-		PetscCall(JacResGetTempRes(jr, jr->ts->dt));
-		PetscCall(JacResGetTempMat(jr, jr->ts->dt));
+		// latent heat release makes the energy equation nonlinear:
+		// Newton iterations with line search (otherwise a single correction)
+		if(jr->ctrl.latentHR) maxit = 30;
+		else                  maxit = 1;
 
-		// compute and apply temperature correction
-		PetscCall(KSPSetOperators(jr->tksp, jr->Att, jr->Att));
-		PetscCall(KSPSetUp(jr->tksp));
-		PetscCall(KSPSolve(jr->tksp, jr->ge, jr->dT));
-		PetscCall(VecAXPY (jr->gT, -1.0, jr->dT));
+		rnorm0 = 0.0;
+		rnorm  = 0.0;
+		rnew   = 0.0;
+
+		for(it = 0; it < maxit; it++)
+		{
+			// get residual (with latent heat it is evaluated by the line search after the first iteration)
+			if(!jr->ctrl.latentHR || !it)
+			{
+				PetscCall(JacResGetTempRes(jr, jr->ts->dt));
+			}
+
+			// check convergence of latent heat iterations
+			if(jr->ctrl.latentHR)
+			{
+				if(!it)
+				{
+					PetscCall(VecNorm(jr->ge, NORM_2, &rnorm));
+
+					rnorm0 = rnorm;
+				}
+
+				if(rnorm <= 1e-8*rnorm0) break;
+			}
+
+			// get tangent matrix
+			PetscCall(JacResGetTempMat(jr, jr->ts->dt));
+
+			// compute and apply temperature correction
+			PetscCall(KSPSetOperators(jr->tksp, jr->Att, jr->Att));
+			PetscCall(KSPSetUp(jr->tksp));
+			PetscCall(KSPSolve(jr->tksp, jr->ge, jr->dT));
+			PetscCall(VecAXPY (jr->gT, -1.0, jr->dT));
+
+			if(jr->ctrl.latentHR)
+			{
+				// backtracking line search on the residual norm
+				// (prevents Newton iterations from cycling across T_sol and T_liq)
+				lambda = 1.0;
+
+				for(ls = 0; ls < 10; ls++)
+				{
+					PetscCall(JacResGetTempRes(jr, jr->ts->dt));
+					PetscCall(VecNorm(jr->ge, NORM_2, &rnew));
+
+					// accept a decrease, or keep the last (smallest) step
+					if(rnew < rnorm || ls == 9) break;
+
+					lambda /= 2.0;
+
+					PetscCall(VecAXPY(jr->gT, lambda, jr->dT));
+				}
+
+				rnorm = rnew;
+
+				// stop if the correction is negligible
+				PetscCall(VecNorm(jr->dT, NORM_INFINITY, &dTmax));
+				PetscCall(VecNorm(jr->gT, NORM_INFINITY, &Tmax));
+
+				if(lambda*dTmax <= 1e-10*Tmax) break;
+			}
+		}
+
+		if(jr->ctrl.latentHR && it == maxit)
+		{
+			PetscPrintf(PETSC_COMM_WORLD, "WARNING: temperature (latent heat release) not converged in %" PetscInt_FMT " iterations \n", maxit);
+		}
 	}
 
 	PetscFunctionReturn(0);

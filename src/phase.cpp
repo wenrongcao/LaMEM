@@ -455,6 +455,7 @@ PetscErrorCode DBMatReadPhase(DBMat *dbm, FB *fb, PetscBool PrintOutput)
 	PetscCall(getScalarParam(fb, _OPTIONAL_, "Latent_hx", &m->Latent_hx,  1, 1.0));
 	PetscCall(getScalarParam(fb, _OPTIONAL_, "T_liq",    &m->T_liq,  1, 1.0));
 	PetscCall(getScalarParam(fb, _OPTIONAL_, "T_sol",    &m->T_sol,  1, 1.0));
+	PetscCall(getIntParam   (fb, _OPTIONAL_, "latent_heat_release", &m->latentHR, 1, 1));
 
 	//=================================================================================
 	// melt fraction viscosity parametrization
@@ -475,7 +476,20 @@ PetscErrorCode DBMatReadPhase(DBMat *dbm, FB *fb, PetscBool PrintOutput)
 	   (m->T_liq && (!m->Latent_hx || !m->T_sol)) ||
 	   (m->T_sol && (!m->Latent_hx || !m->T_liq)))
 	{
-		SETERRQ(PETSC_COMM_WORLD, PETSC_ERR_USER, "Some but not all dike heating parameters defined for phase %" PetscInt_FMT " (T_sol, T_liq, Latent_hx) \n", ID);
+		SETERRQ(PETSC_COMM_WORLD, PETSC_ERR_USER, "Some but not all latent heat parameters defined for phase %" PetscInt_FMT " (T_sol, T_liq, Latent_hx) \n", ID);
+	}
+
+	// check latent heat release
+	if(m->latentHR)
+	{
+		if(!m->Latent_hx)
+		{
+			SETERRQ(PETSC_COMM_WORLD, PETSC_ERR_USER, "latent_heat_release requires Latent_hx, T_sol and T_liq (phase %" PetscInt_FMT ") \n", ID);
+		}
+		if(m->T_liq <= m->T_sol)
+		{
+			SETERRQ(PETSC_COMM_WORLD, PETSC_ERR_USER, "latent_heat_release requires T_liq > T_sol (phase %" PetscInt_FMT ") \n", ID);
+		}
 	}
 
 	// check temperature-dependent diffusivity
@@ -750,6 +764,7 @@ PetscErrorCode DBMatReadPhase(DBMat *dbm, FB *fb, PetscBool PrintOutput)
 		MatPrintScalParam(m->T_liq,  "T_liq",  "[C]",      scal, title, &print_title);
 		MatPrintScalParam(m->T_sol,  "T_sol",  "[C]",      scal, title, &print_title);
 		MatPrintScalParam(m->Latent_hx,  "Latent_hx",  "[J/kg]",      scal, title, &print_title);
+		if(m->latentHR) PetscPrintf(PETSC_COMM_WORLD, "latent_heat_release = %" PetscInt_FMT "  ", m->latentHR);
 
 		PetscPrintf(PETSC_COMM_WORLD,"\n\n");
 

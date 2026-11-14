@@ -906,9 +906,19 @@
                                         #   No latent heat; dike heating (dikeHeat) is unchanged and still scales the resulting k.
         A          = 1e-9   # radiogenic heat production
         T          = 100.0  # optional temperature to set within the phase
-        Latent_hx  = 5e5    # optional, used for dike heating, J/kg
-        T_liq      = 1300   # optional, used for dike heating, liquidus temperature of material, celsius
-        T_sol      = 1000   # optional, used for dike heating, solidus temperature of material, celsius  
+        Latent_hx  = 5e5    # optional, used for dike heating and latent_heat_release, latent heat of crystallization, J/kg
+        T_liq      = 1300   # optional, used for dike heating and latent_heat_release, liquidus temperature of material, celsius
+        T_sol      = 1000   # optional, used for dike heating and latent_heat_release, solidus temperature of material, celsius
+        latent_heat_release = 0 # optional, 1: release latent heat Latent_hx gradually during crystallization,
+                                #   with a crystal fraction X that increases linearly from 0 at T_liq to 1 at T_sol:
+                                #     rho*Cp*dT/dt - rho*Latent_hx*dX/dt = div(k*grad(T)) + ...
+                                #   Equivalent to an effective heat capacity Cp + Latent_hx/(T_liq - T_sol) between
+                                #   T_sol and T_liq. The released heat rho*Latent_hx*(X(T) - X(T_old)) is exact for any
+                                #   time step (energy conserving); the temperature is iterated within each nonlinear
+                                #   iteration. Crystallization is reversible (reheating melts crystals and absorbs heat),
+                                #   and a phase starting between T_sol and T_liq has the equilibrium crystal fraction.
+                                #   Requires Latent_hx, T_sol and T_liq (T_liq > T_sol); not allowed for a dike phase
+                                #   with dikeHeat = 1. The pre-run diffusion (steady_temp_t) uses a single update per step.
         T_Nu       = 600    # default value for thermal conductivity boundary
         nu_k       = 5      # optional parameter, Nusselt number for use with conductivity
         rho_ph     = TestPD # name of the phase diagram you want to use (still needs rho to be defined for the initial guess of pressure)

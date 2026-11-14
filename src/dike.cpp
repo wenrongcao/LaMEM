@@ -189,6 +189,12 @@ PetscErrorCode DBReadDike(DBPropDike *dbdike, DBMat *dbm, FB *fb, JacRes *jr, Pe
 	PetscCall(getIntParam(   fb, _REQUIRED_, "PhaseTransID", &dike->PhaseTransID, 1, dbm->numPhtr-1));
 	PetscCall(getIntParam(   fb, _OPTIONAL_, "dyndike_start",&dike->dyndike_start, 1, -1));
 
+	// dike heating already accounts for the latent heat of the dike phase
+	if(jr->ctrl.dikeHeat && dbm->phases[dike->PhaseID].latentHR)
+	{
+		SETERRQ(PETSC_COMM_WORLD, PETSC_ERR_USER, "latent_heat_release cannot be used for dike phase %" PetscInt_FMT " with dikeHeat = 1 \n", dike->PhaseID);
+	}
+
 	if (dike->dyndike_start)
 	{
 		dike->Tsol = 1000;

@@ -21,6 +21,7 @@ struct FDSTAG;
 struct FreeSurf;
 struct BCCtx;
 struct DBMat;
+struct Material_t;
 struct DBPropDike;
 struct Dike;
 struct Tensor2RN;
@@ -173,6 +174,7 @@ struct Controls
 	PetscInt    actDike;        // Flag to activate dike, additional term on RHS of divergence
 	PetscInt    useTk;          // activation flag for using temperature-dependent conductivity
 	PetscInt    dikeHeat;       // activation flag for using Behn & Ito heat source in dike
+	PetscInt    latentHR;       // latent heat release is active in at least one phase (set automatically)
 };
 
 //---------------------------------------------------------------------------
@@ -323,6 +325,17 @@ PetscErrorCode JacResGetTempParam(
     PetscScalar Tc,       // temperature of cell
     PetscScalar y_c,
     PetscInt J);          // coordinate of cell
+
+// crystal fraction of a phase with latent heat release
+PetscScalar JacResGetCrystFrac(Material_t *M, PetscScalar T);
+
+PetscErrorCode JacResGetLatentHeat(
+    JacRes      *jr,
+    PetscScalar *phRat,
+    PetscScalar Tc,        // current temperature of cell
+    PetscScalar Tn,        // temperature history of cell
+    PetscScalar *rho_L_dX, // released latent heat per unit volume since Tn
+    PetscScalar *rho_L_s); // its derivative with respect to -Tc
 
 // check whether thermal material parameters are properly defined
 PetscErrorCode JacResCheckTempParam(JacRes *jr);

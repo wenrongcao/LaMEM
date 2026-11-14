@@ -1950,6 +1950,29 @@ if should_run_test("t43_TempDepKappa")
 end
 end
 #---------------------------------------------------------------------------
+if should_run_test("t44_LatentHeat")
+@testset "t44_LatentHeat" begin
+    cd(test_dir)
+    dir = "t44_LatentHeat"
+
+    # crystallization of a 700 C magma sphere with latent heat release between
+    # T_sol = 650 C and T_liq = 750 C, in 500 C host crust with kappa(T)
+    ParamFile = "LatentHeat.dat"
+
+    keywords = ("|T|_2",)
+    acc      = ((rtol=1e-6,),)
+
+    @test perform_lamem_test(dir, ParamFile, "LatentHeat_opt";
+        args     = "-printNorms 1",
+        keywords = keywords,
+        accuracy = acc,
+        cores    = 1,
+        mpiexec  = mpiexec,
+        create_expected_file = update_expected,
+        clean_dir            = clean_files)
+end
+end
+#---------------------------------------------------------------------------
 end
 #---------------------------------------------------------------------------
 

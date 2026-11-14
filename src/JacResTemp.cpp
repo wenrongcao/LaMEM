@@ -152,6 +152,70 @@ PetscErrorCode JacResGetTempParam(
 	PetscFunctionReturn(0);
 }
 //---------------------------------------------------------------------------
+PetscScalar JacResGetCrystFrac(Material_t *M, PetscScalar T)
+{
+	// crystal fraction of a phase with latent heat release
+	// (latent_heat_release = 1: linear between liquidus and solidus)
+
+	if(T >= M->T_liq) return 0.0;
+	if(T <= M->T_sol) return 1.0;
+
+	return (M->T_liq - T)/(M->T_liq - M->T_sol);
+}
+//---------------------------------------------------------------------------
+PetscErrorCode JacResGetLatentHeat(
+    JacRes      *jr,
+    PetscScalar *phRat,
+    PetscScalar Tc,
+    PetscScalar Tn,
+    PetscScalar *rho_L_dX,
+    PetscScalar *rho_L_s)
+{
+	// latent heat released by crystallization since the last time step,
+	// rho*L*(X(Tc) - X(Tn)), and its derivative with respect to -Tc,
+	// summed over the phases with latent heat release
+
+	Material_t  *phases, *M;
+	PetscInt    i, numPhases, AirPhase;
+	PetscScalar cf, rho, dX, s;
+
+	PetscFunctionBeginUser;
+
+	numPhases = jr->dbm->numPhases;
+	phases    = jr->dbm->phases;
+	AirPhase  = jr->surf->AirPhase;
+
+	(*rho_L_dX) = 0.0;
+	(*rho_L_s)  = 0.0;
+
+	for(i = 0; i < numPhases; i++)
+	{
+		M  = &phases[i];
+		cf =  phRat[i];
+
+		if(!M->latentHR || !cf) continue;
+
+		// override air phase density (as in JacResGetTempParam)
+		rho = M->rho;
+
+		if(AirPhase != -1 && i == AirPhase)
+		{
+			rho = 1.0/jr->scal->density;
+		}
+
+		// crystallized fraction and its derivative with respect to -Tc
+		dX = JacResGetCrystFrac(M, Tc) - JacResGetCrystFrac(M, Tn);
+
+		if(Tc > M->T_sol && Tc < M->T_liq) s = 1.0/(M->T_liq - M->T_sol);
+		else                               s = 0.0;
+
+		(*rho_L_dX) += cf*rho*M->Latent_hx*dX;
+		(*rho_L_s)  += cf*rho*M->Latent_hx*s;
+	}
+
+	PetscFunctionReturn(0);
+}
+//---------------------------------------------------------------------------
 PetscErrorCode JacResCheckTempParam(JacRes *jr)
 {
 	// check whether thermal material parameters are properly defined
@@ -181,6 +245,9 @@ PetscErrorCode JacResCheckTempParam(JacRes *jr)
 		}
 		if(M->k   == 0.0 && !M->TDkappa) SETERRQ(PETSC_COMM_WORLD, PETSC_ERR_USER, "Define conductivity of phase %" PetscInt_FMT "\n", i);
 		if(M->Cp  == 0.0) SETERRQ(PETSC_COMM_WORLD, PETSC_ERR_USER, "Define heat capacity of phase %" PetscInt_FMT "\n", i);
+
+		// activate latent heat release
+		if(M->latentHR) jr->ctrl.latentHR = 1;
 	}
 
 	PetscFunctionReturn(0);
@@ -418,7 +485,7 @@ PetscErrorCode JacResGetTempRes(JacRes *jr, PetscScalar dt)
 	PetscScalar bqx, fqx, bqy, fqy, bqz, fqz;
 	PetscScalar bdpdx, bdpdy, bdpdz, fdpdx, fdpdy, fdpdz;
 	PetscScalar dx, dy, dz;
-	PetscScalar invdt, kc, rho_Cp, rho_A, Tc, Pc, Tn, Hr, Ha;
+	PetscScalar invdt, kc, rho_Cp, rho_A, Tc, Pc, Tn, Hr, Ha, rho_L_dX, rho_L_s;
 	PetscScalar ***ge, ***T, ***lk, ***hxy, ***hxz, ***hyz, ***buff, *e, ***P;
 	PetscScalar ***vx,***vy,***vz;
 	PetscScalar ycell;
@@ -497,6 +564,14 @@ PetscErrorCode JacResGetTempRes(JacRes *jr, PetscScalar dt)
 		// conductivity, heat capacity, radiogenic heat production
 		PetscCall(JacResGetTempParam(jr, svCell->phRat, &kc, &rho_Cp, &rho_A, Tc, ycell, jcell));
 
+		// latent heat released by crystallization
+		rho_L_dX = 0.0;
+
+		if(jr->ctrl.latentHR)
+		{
+			PetscCall(JacResGetLatentHeat(jr, svCell->phRat, Tc, Tn, &rho_L_dX, &rho_L_s));
+		}
+
 		// shear heating term (effective)
 		Hr = svDev->Hr
 		+ (hxy[k][j][i] + hxy[k][j+1][i] + hxy[k][j][i+1] + hxy[k][j+1][i+1] +
@@ -556,7 +631,7 @@ PetscErrorCode JacResGetTempRes(JacRes *jr, PetscScalar dt)
 		dz = SIZE_CELL(k, sz, fs->dsz);
 
 		// get residual
-		ge[k][j][i] = rho_Cp*(invdt*(Tc - Tn)) - (fqx - bqx)/dx - (fqy - bqy)/dy - (fqz - bqz)/dz - Hr - rho_A - Ha;
+		ge[k][j][i] = rho_Cp*(invdt*(Tc - Tn)) - invdt*rho_L_dX - (fqx - bqx)/dx - (fqy - bqy)/dy - (fqz - bqz)/dz - Hr - rho_A - Ha;
 	}
 	END_STD_LOOP
 
@@ -606,7 +681,7 @@ PetscErrorCode JacResGetTempMat(JacRes *jr, PetscScalar dt)
 	PetscScalar bkx, fkx, bky, fky, bkz, fkz;
 	PetscScalar bdx, fdx, bdy, fdy, bdz, fdz;
 	PetscScalar dx, dy, dz;
-	PetscScalar v[7], cf[6], kc, rho_Cp(0.0), invdt, Tc;
+	PetscScalar v[7], cf[6], kc, rho_Cp(0.0), invdt, Tc, rho_L_dX, rho_L_s;
 	MatStencil  row[1], col[7];
 	Vec         lT;
 	PetscScalar ***lk, ***bcT, ***buff, ***T;
@@ -670,6 +745,14 @@ PetscErrorCode JacResGetTempMat(JacRes *jr, PetscScalar dt)
 		// conductivity, heat capacity
 		PetscCall(JacResGetTempParam(jr, svCell->phRat, &kc, &rho_Cp, NULL, Tc, ycell, jcell));
 
+		// latent heat contribution to the effective heat capacity
+		rho_L_s = 0.0;
+
+		if(jr->ctrl.latentHR)
+		{
+			PetscCall(JacResGetLatentHeat(jr, svCell->phRat, Tc, svCell->svBulk.Tn, &rho_L_dX, &rho_L_s));
+		}
+
 		// check index bounds and TPC multipliers
 		Im1 = i-1; cf[0] = 1.0; if(Im1 < 0)  { if(!periodic) { Im1++; if(bcT[k][j][i-1] != DBL_MAX) cf[0] = -1.0; } }
 		Ip1 = i+1; cf[1] = 1.0; if(Ip1 > mx) { if(!periodic) { Ip1--; if(bcT[k][j][i+1] != DBL_MAX) cf[1] = -1.0; } }
@@ -711,7 +794,7 @@ PetscErrorCode JacResGetTempMat(JacRes *jr, PetscScalar dt)
 		v[3] = -fky/fdy/dy*cf[3];
 		v[4] = -bkz/bdz/dz*cf[4];
 		v[5] = -fkz/fdz/dz*cf[5];
-		v[6] =  invdt*rho_Cp           +
+		v[6] =  invdt*(rho_Cp + rho_L_s) +
 		        (bkx/bdx + fkx/fdx)/dx +
 		        (bky/bdy + fky/fdy)/dy +
 		        (bkz/bdz + fkz/fdz)/dz;
